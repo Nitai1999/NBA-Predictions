@@ -5,15 +5,18 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # 3. Prevent Python from writing .pyc files and enable unbuffered logging
+# This ensures you see your AI's print statements in the cloud logs immediately
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# 4. Install system dependencies (needed for some pandas/numpy operations)
+# 4. Install system dependencies 
+# build-essential is often needed for pandas/numpy performance
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# 5. Copy only requirements first (leverages Docker caching)
+# 5. Copy only requirements first to leverage Docker layer caching
+# Note: Ensure you ran `pip freeze > requirements.txt` before building!
 COPY requirements.txt .
 
 # 6. Install Python dependencies
@@ -23,8 +26,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # 8. Create the data directory structure
+# This ensures your fetch scripts have a place to save CSVs inside the container
 RUN mkdir -p data/raw
 
-# 9. Set the command to run your prediction engine
-# (Or your web server once you build the site)
-CMD ["python", "src/run_daily_predictions.py"]
+# 9. Expose the port Streamlit uses by default
+EXPOSE 8501
+
+# 10. Command to run the Streamlit app
+# --server.address=0.0.0.0 is critical for cloud deployment
+CMD ["streamlit", "run", "src/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
