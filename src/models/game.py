@@ -17,134 +17,99 @@ class Game:
         self.game_type = game_type
         self.is_neutral = is_neutral
         self.h2h_limit = h2h_limit
-        self.final_score = final_score # Format: {"home": 110, "away": 105}
+        self.final_score = final_score
         
-        # Path to the ML model in the same folder
         self.model_path = os.path.join(os.path.dirname(__file__), 'nba_model.pkl')
         self.ml_model = self._load_model()
         
-        # Situational Attributes
+        # Stats initialization[cite: 2]
         self.home_rest = self.home_team.get_rest_days(self.date)
         self.away_rest = self.away_team.get_rest_days(self.date)
-        self.h2h_history = self._get_h2h_history()
-        self.home_hot_streak = self._check_recent_streak(self.home_team)
-        self.away_hot_streak = self._check_recent_streak(self.away_team)
+        self.h2h_win_pct = self._get_h2h_history()
 
-        # AI Client setup
         api_key = os.getenv("GEMINI_API_KEY")
         self.client = genai.Client(api_key=api_key) if api_key else None
 
     def _load_model(self):
         if os.path.exists(self.model_path):
-            try:
-                return joblib.load(self.model_path)
-            except Exception:
-                return None
+            try: return joblib.load(self.model_path)
+            except Exception: return None
         return None
 
     def _get_h2h_history(self):
         mask = self.home_team.df['MATCHUP'].str.contains(self.away_team.abbreviation)
         history = self.home_team.df[mask].head(self.h2h_limit)
         if history.empty: return 0.5
-        wins = len(history[history['WL'] == 'W'])
-        return wins / len(history)
+        return (history['WL'] == 'W').mean()
 
-    def _check_recent_streak(self, team):
-        last_5 = team.df.head(5)
-        if len(last_5) < 5: return False
-        return (last_5['WL'] == 'W').all()
-
-    def calculate_prediction_score(self):
-        # If the game is already finished, probability is 100% for the actual winner
+    def calculate_prediction_score(self, missing_home=None, missing_away=None):
         if self.final_score:
             return 1.0 if self.final_score['home'] > self.final_score['away'] else 0.0
 
+        # Base ML Prob[cite: 2]
+        base_prob = 0.5
         if self.ml_model:
             try:
                 features = pd.DataFrame([{
                     'rest_days': self.home_rest,
                     'season_net_rtg': self.home_team.season_metrics.get('net_rating', 0),
                     'recent_net_rtg': self.home_team.last_10_stats.get('net_rating', 0),
-                    'h2h_win_pct': self.h2h_history,
+                    'h2h_win_pct': self.h2h_win_pct,
                     'is_playoff': 1 if self.game_type == GameType.PLAYOFF else 0
                 }])
-                # Returns probability of Home Team winning
-                return self.ml_model.predict_proba(features)[0][1] 
-            except Exception:
-                pass
+                base_prob = self.ml_model.predict_proba(features)[0][1] 
+            except Exception: pass
 
-        # Manual Fallback Logic if ML fails
-        def normalize(val): return (val + 15) / 30 
-        h_net = self.home_team.season_metrics.get('net_rating', 0)
-        a_net = self.away_team.season_metrics.get('net_rating', 0)
+        # Epic 2 Math: Adjusting by available WIF Power
+        h_full = sum(p.wif for p in self.home_team.roster)
+        a_full = sum(p.wif for p in self.away_team.roster)
+        h_missing = sum(p.wif for p in self.home_team.roster if p.name in (missing_home or []))
+        a_missing = sum(p.wif for p in self.away_team.roster if p.name in (missing_away or []))
         
-        h_score = (normalize(h_net) * 0.35) + (self.h2h_history * 0.15)
-        a_score = (normalize(a_net) * 0.35) + ((1 - self.h2h_history) * 0.15)
-        return h_score / (h_score + a_score)
+        home_ratio = (h_full - h_missing) / h_full if h_full > 0 else 1
+        away_ratio = (a_full - a_missing) / a_full if a_full > 0 else 1
+        
+        adj_prob = base_prob * (home_ratio / away_ratio)
+        return max(0.01, min(0.99, adj_prob))
 
-    def get_ai_explanation(self, prob, winner_abr):
+    def get_ai_explanation(self, prob, winner_abr, missing_home, missing_away):
         confidence = f"{prob if prob > 0.5 else (1 - prob):.1%}"
+        status = "COMPLETED" if self.final_score else "PREDICTION"
         
-        if self.final_score:
-            status_summary = (
-                f"--- GAME RECAP ---\n"
-                f"Result: {self.away_team.abbreviation} {self.final_score['away']} - "
-                f"{self.home_team.abbreviation} {self.final_score['home']}\n"
-                f"Status: COMPLETED\n"
-                f"-------------------"
-            )
-        else:
-            status_summary = (
-                f"--- STATISTICAL MODEL SUMMARY ---\n"
-                f"Result: {winner_abr} wins\n"
-                f"Confidence: {confidence}\n"
-                f"Model Type: {'Random Forest ML' if self.ml_model else 'Weighted Manual'}\n"
-                f"----------------------------------"
-            )
+        # Build "Default Mode" injury impact string for transparency
+        injury_impact = ""
+        if missing_home or missing_away:
+            injury_impact = "\n\n--- INJURY IMPACT ---"
+            if missing_home: injury_impact += f"\n{self.home_team.abbreviation} Missing: {', '.join(missing_home)}"
+            if missing_away: injury_impact += f"\n{self.away_team.abbreviation} Missing: {', '.join(missing_away)}"
+        
+        summary = f"--- {status} ---\nResult: {winner_abr} wins\nConfidence: {confidence}\nModel: RF ML + WIF Adjustment{injury_impact}"
 
-        if not self.client:
-            return f"{status_summary}\nHome Rest: {self.home_rest}d | Away Rest: {self.away_rest}d | H2H: {self.h2h_history:.1%}"
+        if not self.client: return summary
 
-        # Dynamic prompt based on whether the game is past or future
-        context = "completed game result" if self.final_score else "upcoming prediction"
-        stats_data = {
-            "matchup": f"{self.away_team.abbreviation} vs {self.home_team.abbreviation}",
+        context = {
+            "matchup": f"{self.away_team.abbreviation} @ {self.home_team.abbreviation}",
             "winner": winner_abr,
-            "metrics": {
-                "h2h_pct": f"{self.h2h_history:.1%}",
-                "home_rest": self.home_rest,
-                "away_rest": self.away_rest
-            }
+            "injuries": {"home": missing_home, "away": missing_away},
+            "metrics": {"h2h": f"{self.h2h_win_pct:.1%}", "home_rest": self.home_rest}
         }
-
-        prompt = f"As an NBA expert analyst, explain the {context} for {stats_data}. Keep it concise and insightful."
-
+        prompt = f"As an NBA expert, analyze this matchup: {context}. Specifically explain how the injuries affect the result."
         try:
             response = self.client.models.generate_content(model="gemini-1.5-pro", contents=prompt)
-            return f"{status_summary}\n\n{response.text.strip()}"
-        except Exception:
-            return status_summary
+            return f"{summary}\n\n{response.text.strip()}"
+        except Exception: return summary
 
-    def predict(self):
-        """
-        The main execution method for Epic 1.
-        Calculates the outcome, identifies the winner, and returns the narrative.
-        """
-        prob = self.calculate_prediction_score()
-        
-        # Determine winner based on actual score (past) or probability (future)
+    def predict(self, missing_home=None, missing_away=None):
+        """Unified method for Epic 1 & 2[cite: 2]."""
+        prob = self.calculate_prediction_score(missing_home, missing_away)
         if self.final_score:
-            home_won = self.final_score['home'] > self.final_score['away']
-            winner_abr = self.home_team.abbreviation if home_won else self.away_team.abbreviation
+            winner = self.home_team.abbreviation if self.final_score['home'] > self.final_score['away'] else self.away_team.abbreviation
         else:
-            winner_abr = self.home_team.abbreviation if prob > 0.5 else self.away_team.abbreviation
-        
-        # Fetch the narrative
-        narrative = self.get_ai_explanation(prob, winner_abr)
+            winner = self.home_team.abbreviation if prob > 0.5 else self.away_team.abbreviation
         
         return {
-            "winner": winner_abr,
+            "winner": winner,
             "probability": prob,
-            "narrative": narrative,
+            "narrative": self.get_ai_explanation(prob, winner, missing_home, missing_away),
             "is_past": self.final_score is not None
         }
