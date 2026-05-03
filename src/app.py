@@ -65,7 +65,7 @@ if st.button("Generate AI Prediction"):
             # This prevents the 'NoneType' error by ensuring files are present.
             for team in [h_team, a_team]:
                 # Assuming your Team class has a check for data or you check files manually
-                data_path = f"data/raw/{team.team_id}.csv"
+                data_path = f"data/raw/{team.team_id}_games.csv"
                 if not os.path.exists(data_path):
                     st.info(f"📥 Data for {team.team_id} not found on server. Fetching fresh stats...")
                     team.fetch_stats() # This triggers your nba_api logic

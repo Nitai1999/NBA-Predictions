@@ -1,13 +1,15 @@
 import pandas as pd
 import os
-from nba_api.stats.endpoints import leaguegamelog # Switched for better data coverage
+import time
+from nba_api.stats.endpoints import leaguegamefinder
 from nba_api.stats.static import teams as nba_teams
 
 class Team:
     def __init__(self, abbreviation):
         self.abbreviation = abbreviation
         self.team_id = abbreviation 
-        self.file_path = os.path.join('data', 'raw', f"{self.abbreviation}.csv")
+        # Synchronized with CLI filename format
+        self.file_path = os.path.join('data', 'raw', f"{self.abbreviation}_games.csv")
         self.df = None
         
         # Default stats to prevent UI crashes
@@ -22,29 +24,30 @@ class Team:
         return os.path.exists(self.file_path)
 
     def fetch_stats(self):
-        """Fetches stats using LeagueGameLog which reliably includes PLUS_MINUS."""
+        """Fetches stats using LeagueGameFinder (consistent with CLI)."""
         try:
-            nba_team_search = [t for t in nba_teams.get_teams() if t['abbreviation'] == self.abbreviation]
-            if not nba_team_search:
+            target_team = [t for t in nba_teams.get_teams() if t['abbreviation'] == self.abbreviation]
+            if not target_team:
                 return False
             
-            real_id = nba_team_search[0]['id']
-
-            # Using LeagueGameLog filtered for this team - this contains PLUS_MINUS
-            log_request = leaguegamelog.LeagueGameLog(
-                team_id_nullable=real_id, 
-                season='2025-26', 
-                player_or_team_abbreviation='T'
-            )
-            gamelog = log_request.get_data_frames()[0]
-
+            real_id = target_team[0]['id']
             os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
-            gamelog.to_csv(self.file_path, index=False)
-            
+
+            # Pause to prevent API rate limiting
+            time.sleep(0.6) 
+            # Correct argument for LeagueGameFinder is team_id_nullable
+            game_finder = leaguegamefinder.LeagueGameFinder(team_id_nullable=real_id)
+            new_games_df = game_finder.get_data_frames()[0]
+
+            # Standardized filtering (Matches CLI version)
+            new_games_df['GAME_DATE'] = pd.to_datetime(new_games_df['GAME_DATE'])
+            new_games_df = new_games_df[new_games_df['GAME_DATE'] >= '2021-01-01']
+            new_games_df = new_games_df[new_games_df['SEASON_ID'].str.startswith(('2', '4'))]
+
+            new_games_df.to_csv(self.file_path, index=False)
             self.load_and_process()
             return True
         except Exception as e:
-            # This will now give you a more specific error if the API blocks you
             print(f"Error fetching {self.abbreviation}: {e}")
             return False
 
@@ -56,17 +59,15 @@ class Team:
         if self.df.empty:
             return
 
-        # FIX: Added format='mixed' to silence the UserWarning
-        self.df['GAME_DATE'] = pd.to_datetime(self.df['GAME_DATE'], format='mixed', errors='coerce')
+        # Fixed date warning by specifying format
+        self.df['GAME_DATE'] = pd.to_datetime(self.df['GAME_DATE'], format='mixed')
         self.df = self.df.sort_values('GAME_DATE', ascending=False).reset_index(drop=True)
 
-        # Check if PLUS_MINUS exists before calculating to avoid KeyError
+        # LeagueGameFinder includes PLUS_MINUS by default
         if 'PLUS_MINUS' in self.df.columns:
             self.df['OPP_PTS'] = self.df['PTS'] - self.df['PLUS_MINUS']
-        else:
-            # Fallback logic: if it's missing, we just treat OPP_PTS as unknown or 0
-            self.df['OPP_PTS'] = 0
         
+        # Logic matches CLI: '2' for Regular Season, '4' for Playoffs
         reg_season_df = self.df[self.df['SEASON_ID'].astype(str).str.startswith('2')]
         
         if not reg_season_df.empty:
@@ -95,7 +96,6 @@ class Team:
         reg_df = self.df[self.df['SEASON_ID'] == self.latest_reg_season_id]
         home_df = reg_df[~reg_df['MATCHUP'].str.contains('@')]
         away_df = reg_df[reg_df['MATCHUP'].str.contains('@')]
-        
         self.splits['home_win_pct'] = len(home_df[home_df['WL'] == 'W']) / len(home_df) if not home_df.empty else 0
         self.splits['away_win_pct'] = len(away_df[away_df['WL'] == 'W']) / len(away_df) if not away_df.empty else 0
 
