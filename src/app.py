@@ -18,30 +18,34 @@ def get_actual_games(date_str):
 
         id_map = {t['id']: t['abbreviation'] for t in nba_teams.get_teams()}
         results = []
-        is_past_date = datetime.strptime(date_str, '%Y-%m-%d').date() <= date.today()
+        target_date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+        is_past_date = target_date_obj < date.today()
 
         for _, row in games.iterrows():
             g_id, h_id, a_id = row['GAME_ID'], row['HOME_TEAM_ID'], row['VISITOR_TEAM_ID']
             h_abr, a_abr = id_map.get(h_id), id_map.get(a_id)
             
-            # API Score Check[cite: 13]
-            api_score = None
+            final_score = None
+            # Check API Scoreboard
             res = line_score[line_score['GAME_ID'] == g_id]
             if not res.empty:
                 h_pts = res[res['TEAM_ID'] == h_id]['PTS'].values[0] or 0
                 a_pts = res[res['TEAM_ID'] == a_id]['PTS'].values[0] or 0
                 if h_pts > 0 or a_pts > 0:
-                    api_score = {"home": int(h_pts), "away": int(a_pts)}
+                    final_score = {"home": int(h_pts), "away": int(a_pts)}
 
-            # CSV Fallback Check[cite: 13, 16]
-            csv_score = Team(h_abr).get_score_from_csv(date_str)
-            final_score = api_score or csv_score
+            # BUG FIX: If it's a past date, check local CSV as a secondary source[cite: 13, 16]
+            if final_score is None and is_past_date:
+                final_score = Team(h_abr).get_score_from_csv(date_str)
 
-            # PHANTOM FILTER: Only skip if 'TBD' status AND date is past AND no score found anywhere[cite: 13]
-            if row['GAME_STATUS_TEXT'] == 'TBD' and final_score is None and is_past_date:
-                continue
-
-            results.append({"home": h_abr, "away": a_abr, "status": row['GAME_STATUS_TEXT'], "final_score": final_score})
+            # PHANTOM LOGIC REMOVED: All games returned by API are shown.
+            results.append({
+                "home": h_abr, 
+                "away": a_abr, 
+                "status": row['GAME_STATUS_TEXT'], 
+                "final_score": final_score,
+                "is_past_date": is_past_date
+            })
         return results
     except: return []
 
@@ -51,19 +55,23 @@ date_str = selected_date.strftime('%Y-%m-%d')
 games_list = get_actual_games(date_str)
 
 if not games_list:
-    st.info("No active games found. Mishka says: The series might be over! 🐕")
+    st.info("No games found for this date. 🐕")
 else:
     options = [f"{g['away']} @ {g['home']} ({'FINAL' if g['final_score'] else g['status']})" for g in games_list]
     selected_option = st.selectbox("Choose a Game", options)
     game_data = next(g for g in games_list if f"{g['away']} @ {g['home']} ({'FINAL' if g['final_score'] else g['status']})" == selected_option)
 
-    if game_data['final_score']:
+    # UI LOGIC FIX: If it's a past date OR we have a score, show result ONLY
+    if game_data['final_score'] or game_data['is_past_date']:
         st.success("🏟️ GAME COMPLETED")
-        c1, c2 = st.columns(2)
-        c1.metric(game_data['away'], game_data['final_score']['away'])
-        c2.metric(game_data['home'], game_data['final_score']['home'])
-        st.caption("Mishka's dog-wisdom: 'The past is written, but the future is wide open!'")
+        if game_data['final_score']:
+            c1, c2 = st.columns(2)
+            c1.metric(game_data['away'], game_data['final_score']['away'])
+            c2.metric(game_data['home'], game_data['final_score']['home'])
+        else:
+            st.warning("Score data not found in API or local database. Series placeholder or data lag.")
     else:
+        # Prediction UI for today/future
         with st.spinner("Syncing rosters..."):
             fetch_team_data(game_data['home'])
             fetch_team_data(game_data['away'])

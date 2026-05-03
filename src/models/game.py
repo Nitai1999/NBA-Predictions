@@ -53,25 +53,20 @@ class Game:
         confidence = f"{prob if prob > 0.5 else (1 - prob):.1%}"
         status = "COMPLETED" if self.final_score else "PREDICTION"
         
-        injury_txt = ""
-        if missing_home or missing_away:
-            injury_txt = f"\n\n--- INJURY IMPACT ---\nHome Missing: {missing_home}\nAway Missing: {missing_away}"
-            
-        summary = f"--- {status} ---\nResult: {winner_abr} wins\nConfidence: {confidence}\nModel: RF ML + WIF Adjustment{injury_txt}"
+        summary = f"--- {status} ---\nWinner: {winner_abr}\nConfidence: {confidence}\nModel: RF ML + WIF Adjustment"
 
         if not self.client: return summary
 
-        prompt = f"Explain the {status} for {self.away_team.abbreviation} @ {self.home_team.abbreviation}. Favored: {winner_abr}. Injuries: Home {missing_home}, Away {missing_away}. Keep it professional."
+        prompt = f"Analyze the NBA game: {self.away_team.abbreviation} @ {self.home_team.abbreviation}. Favored: {winner_abr}. Injuries: Home {missing_home}, Away {missing_away}."
         try:
             response = self.client.models.generate_content(model="gemini-1.5-pro", contents=prompt)
             return f"{summary}\n\n{response.text.strip()}"
         except: return summary
 
     def predict(self, missing_home=None, missing_away=None):
-        """Unified prediction logic for both past and future games[cite: 14]."""
         if self.final_score:
             winner = self.home_team.abbreviation if self.final_score['home'] > self.final_score['away'] else self.away_team.abbreviation
-            return {"winner": winner, "probability": 1.0 if winner == self.home_team.abbreviation else 0.0, "narrative": "Game Finished. Result recorded.", "is_past": True}
+            return {"winner": winner, "probability": 1.0 if winner == self.home_team.abbreviation else 0.0, "narrative": "Game recorded in database.", "is_past": True}
             
         prob = self.calculate_prediction_score(missing_home, missing_away)
         winner = self.home_team.abbreviation if prob > 0.5 else self.away_team.abbreviation
