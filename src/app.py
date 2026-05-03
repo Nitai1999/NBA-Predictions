@@ -1,108 +1,118 @@
 import streamlit as st
-import pandas as pd
 import os
 from datetime import datetime
-from models.game import Game
+from nba_api.stats.endpoints import scoreboardv2
+from nba_api.stats.static import teams
+
+# Custom Imports
 from models.team import Team
+from models.game import Game, GameType
+from fetch_team_data import fetch_team_data
 
-# --- 1. Page Configuration ---
-st.set_page_config(
-    page_title="NBA Predictor | Nitai Weiss",
-    page_icon="🏀",
-    layout="centered"
-)
+st.set_page_config(page_title="NBA Prediction Hub", page_icon="🏀")
 
-# --- 2. Custom CSS for a Professional Look ---
-st.markdown("""
-    <style>
-    .main {
-        background-color: #f5f7f9;
-    }
-    .stButton>button {
-        width: 100%;
-        border-radius: 5px;
-        height: 3em;
-        background-color: #ff4b4b;
-        color: white;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+# --- Utility Functions ---
+@st.cache_data(ttl=3600) # Cache schedule for 1 hour
+def get_actual_games(date_str):
+    try:
+        board = scoreboardv2.ScoreboardV2(game_date=date_str)
+        games = board.get_data_frames()[0]
+        line_score = board.get_data_frames()[1] # Results
+        
+        if games.empty:
+            return []
 
-# --- 3. Sidebar Configuration ---
-st.sidebar.header("⚙️ Settings")
-game_date = st.sidebar.date_input("Matchup Date", datetime.now())
-h2h_limit = st.sidebar.slider("Head-to-Head History Limit", 5, 20, 10)
+        nba_teams = teams.get_teams()
+        id_to_abr = {t['id']: t['abbreviation'] for t in nba_teams}
 
-# --- 4. Main UI ---
-st.title("🏀 NBA Prediction Engine")
-st.markdown("Automated AI analysis using Gemini 1.5 Pro & Real-time NBA Statistics.")
+        results = []
+        for _, row in games.iterrows():
+            game_id = row['GAME_ID']
+            home_id = row['HOME_TEAM_ID']
+            away_id = row['VISITOR_TEAM_ID']
+            
+            # Check for existing scores
+            game_results = line_score[line_score['GAME_ID'] == game_id]
+            final_score = None
+            if not game_results.empty and row['GAME_STATUS_TEXT'] == 'Final':
+                home_pts = game_results[game_results['TEAM_ID'] == home_id]['PTS'].values[0]
+                away_pts = game_results[game_results['TEAM_ID'] == away_id]['PTS'].values[0]
+                final_score = {"home": home_pts, "away": away_pts}
 
-# Team Selection
-teams = [
-    "ATL", "BOS", "BKN", "CHA", "CHI", "CLE", "DAL", "DEN", "DET", "GSW",
-    "HOU", "IND", "LAC", "LAL", "MEM", "MIA", "MIL", "MIN", "NOP", "NYK",
-    "OKC", "ORL", "PHI", "PHX", "POR", "SAC", "SAS", "TOR", "UTA", "WAS"
-]
+            results.append({
+                "game_id": game_id,
+                "home": id_to_abr.get(home_id),
+                "away": id_to_abr.get(away_id),
+                "status": row['GAME_STATUS_TEXT'],
+                "final_score": final_score
+            })
+        return results
+    except Exception:
+        return []
 
-col1, col2 = st.columns(2)
-with col1:
-    away_team_code = st.selectbox("Away Team", teams, index=1) # Default to BOS
-with col2:
-    home_team_code = st.selectbox("Home Team", teams, index=15) # Default to MIA
+# --- UI Layout ---
+st.title("🏀 NBA Prediction Hub")
+st.markdown("Automated AI analysis using **Random Forest ML** & **Gemini 1.5 Pro**.")
 
-# --- 5. Prediction Logic ---
-if st.button("Generate AI Prediction"):
-    # Ensure data directory exists inside the container
-    os.makedirs("data/raw", exist_ok=True)
+# 1. Calendar Selection
+selected_date = st.date_input("Select Date", datetime.now())
+date_str = selected_date.strftime('%Y-%m-%d')
+
+# 2. Fetch Actual Games
+with st.spinner("Checking NBA Schedule..."):
+    games_list = get_actual_games(date_str)
+
+if not games_list:
+    st.info(f"No games scheduled for {date_str}. Mishka says: Time for a walk! 🐕")
+else:
+    # 3. Game Selection
+    options = [f"{g['away']} @ {g['home']} ({g['status']})" for g in games_list]
+    selected_option = st.selectbox("Choose a Game", options)
     
-    with st.spinner(f"Analyzing {away_team_code} @ {home_team_code}..."):
-        try:
-            # Initialize Team objects
-            h_team = Team(home_team_code)
-            a_team = Team(away_team_code)
+    # Identify the selected game object
+    game_data = next(g for g in games_list if f"{g['away']} @ {g['home']} ({g['status']})" == selected_option)
 
-            # CHECK: Does data exist? If not, fetch it live on Render.
-            # This prevents the 'NoneType' error by ensuring files are present.
-            for team in [h_team, a_team]:
-                # Assuming your Team class has a check for data or you check files manually
-                data_path = f"data/raw/{team.team_id}_games.csv"
-                if not os.path.exists(data_path):
-                    st.info(f"📥 Data for {team.team_id} not found on server. Fetching fresh stats...")
-                    team.fetch_stats() # This triggers your nba_api logic
+    if st.button("Generate AI Analysis"):
+        # Data Integrity Check: Ensure we have the CSVs[cite: 2]
+        with st.status("Data Sync in Progress...", expanded=False) as status:
+            st.write(f"Checking {game_data['home']} records...")
+            fetch_team_data(game_data['home'])
+            st.write(f"Checking {game_data['away']} records...")
+            fetch_team_data(game_data['away'])
+            status.update(label="Data Synchronized!", state="complete")
 
-            # Run Prediction Logic
-            game = Game(h_team, a_team, str(game_date), h2h_limit=h2h_limit)
+        # Initialize Analysis
+        home_team = Team(game_data['home'])
+        away_team = Team(game_data['away'])
+        
+        game_instance = Game(
+            home_team=home_team,
+            away_team=away_team,
+            date=date_str,
+            final_score=game_data['final_score']
+        )
+
+        # Output Results
+        st.divider()
+        if game_data['final_score']:
+            st.subheader("🏟️ Game Result")
+            c1, c2 = st.columns(2)
+            c1.metric(game_data['away'], game_data['final_score']['away'])
+            c2.metric(game_data['home'], game_data['final_score']['home'])
+        else:
+            prob = game_instance.calculate_prediction_score()
+            winner = game_data['home'] if prob > 0.5 else game_data['away']
+            conf = f"{prob if prob > 0.5 else (1 - prob):.1%}"
             
-            # This is where the 'NoneType' usually happens if calculations fail
-            prob = game.calculate_prediction_score()
-            
-            if prob is None:
-                st.error("Error: Prediction engine returned empty results. Try a different matchup.")
-            else:
-                winner = home_team_code if prob > 0.5 else away_team_code
-                confidence = prob if prob > 0.5 else (1 - prob)
+            st.subheader(f"🔮 Prediction: {winner} wins")
+            st.write(f"Confidence Level: **{conf}**")
 
-                # --- 6. Results Display ---
-                st.divider()
-                
-                res_col1, res_col2 = st.columns(2)
-                with res_col1:
-                    st.metric("Predicted Winner", winner)
-                with res_col2:
-                    st.metric("Confidence Level", f"{confidence:.1%}")
+        st.markdown("### 🤖 AI Narrative Analysis")
+        narrative = game_instance.get_ai_explanation(
+            prob if not game_data['final_score'] else 0, 
+            game_data['home']
+        )
+        st.write(narrative)
 
-                st.subheader("🤖 AI Narrative Analysis")
-                # Ensure GEMINI_API_KEY is in Render Environment Variables
-                narrative = game.get_ai_explanation(prob, winner)
-                st.write(narrative)
-
-                # Optional "Mishka" feature
-                st.caption(f"🐾 Mishka's dog-wisdom: 'The {winner} look faster today!'")
-
-        except Exception as e:
-            st.error(f"⚠️ Application Error: {e}")
-            st.info("Check your Render logs for the full Traceback.")
-
-# --- 7. Footer ---
 st.divider()
-st.caption("Built for Portfolio - Nitai Weiss | Data powered by NBA_API")
+st.caption(f"🐾 Mishka's dog-wisdom: 'The schedule is my favorite bone to chew on!'")
