@@ -56,7 +56,6 @@ class Game:
                 base_prob = self.ml_model.predict_proba(features)[0][1]
             except: pass
 
-        # WIF Adjustment logic[cite: 2]
         h_full = sum(p.wif for p in self.home_team.roster)
         a_full = sum(p.wif for p in self.away_team.roster)
         h_miss = sum(p.wif for p in self.home_team.roster if p.name in (missing_home or []))
@@ -71,14 +70,7 @@ class Game:
         confidence = f"{prob if prob > 0.5 else (1 - prob):.1%}"
         status = "COMPLETED" if self.final_score else "PREDICTION"
         
-        # Build Default Mode injury text[cite: 2]
-        injury_txt = ""
-        if missing_home or missing_away:
-            injury_txt = "\n\n--- INJURY IMPACT ---"
-            if missing_home: injury_txt += f"\n{self.home_team.abbreviation} Missing: {', '.join(missing_home)}"
-            if missing_away: injury_txt += f"\n{self.away_team.abbreviation} Missing: {', '.join(missing_away)}"
-        
-        summary = f"--- {status} ---\nResult: {winner_abr} wins\nConfidence: {confidence}\nModel: RF ML + WIF Adjustment{injury_txt}"
+        summary = f"--- {status} ---\nResult: {winner_abr} wins\nConfidence: {confidence}\nModel: RF ML + WIF Adjustment"
 
         if not self.client: return summary
 
