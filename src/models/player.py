@@ -7,7 +7,11 @@ class Player:
         self.mpg = stats_row.get('MIN', 0)
         self.usage_pct = stats_row.get('USG_PCT', 0)
         self.net_rating = stats_row.get('NET_RATING', 0)
+        # Using PIE (Player Impact Estimate) as a proxy for Efficiency[cite: 10, 15]
         self.efficiency = stats_row.get('PIE', 0) 
+        
+        # Calculate WIF: Weighted Impact Factor[cite: 10, 15]
+        # Formula: (Usage * Efficiency * 100) + Net Rating
         self.wif = (self.usage_pct * self.efficiency * 100) + self.net_rating
 
     def __repr__(self):

@@ -12,6 +12,7 @@ class Team:
         self.file_path = os.path.join('data', 'raw', f"{self.abbreviation}_games.csv")
         self.df = None
         
+        # Stat dictionaries[cite: 11, 16]
         self.last_10_stats = {'win_pct': 0, 'net_rating': 0, 'avg_pace': 0}
         self.season_metrics = {'win_pct': 0, 'off_rating': 0, 'def_rating': 0, 'pace': 0, 'net_rating': 0}
         self.splits = {'home_win_pct': 0, 'away_win_pct': 0}
@@ -26,9 +27,11 @@ class Team:
         return os.path.exists(self.file_path)
 
     def fetch_stats(self):
+        """Full historical data fetch with rate limiting[cite: 11, 16]."""
         try:
             target_team = [t for t in nba_teams.get_teams() if t['abbreviation'] == self.abbreviation]
             if not target_team: return False
+            
             real_id = target_team[0]['id']
             os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
             time.sleep(0.6) 
@@ -50,9 +53,11 @@ class Team:
         if not self.data_exists(): return
         self.df = pd.read_csv(self.file_path)
         if self.df.empty: return
+
         self.df['GAME_DATE'] = pd.to_datetime(self.df['GAME_DATE'], format='mixed')
         self.df = self.df.sort_values('GAME_DATE', ascending=False).reset_index(drop=True)
 
+        # Advanced Efficiency Logic (POSS, OFF_RTG, PACE)[cite: 11, 16]
         if all(col in self.df.columns for col in ['FGA', 'FTA', 'TOV', 'OREB']):
             self.df['POSS'] = self.df['FGA'] + (0.44 * self.df['FTA']) + self.df['TOV'] - self.df['OREB']
             self.df['OFF_RTG'] = (self.df['PTS'] / self.df['POSS']) * 100
@@ -74,17 +79,6 @@ class Team:
             self.season_metrics['net_rating'] = season_df['NET_RTG'].mean()
             self.season_metrics['pace'] = season_df['PACE'].mean()
 
-        last_10 = season_df.head(10)
-        if not last_10.empty:
-            self.last_10_stats['win_pct'] = len(last_10[last_10['WL'] == 'W']) / len(last_10)
-            self.last_10_stats['net_rating'] = last_10['NET_RTG'].mean()
-            self.last_10_stats['avg_pace'] = last_10['PACE'].mean()
-
-        home = season_df[~season_df['MATCHUP'].str.contains('@')]
-        away = season_df[season_df['MATCHUP'].str.contains('@')]
-        self.splits['home_win_pct'] = len(home[home['WL'] == 'W']) / len(home) if not home.empty else 0.5
-        self.splits['away_win_pct'] = len(away[away['WL'] == 'W']) / len(away) if not away.empty else 0.5
-
     def get_rest_days(self, target_date):
         target_dt = pd.to_datetime(target_date)
         past_games = self.df[self.df['GAME_DATE'] < target_dt]
@@ -93,7 +87,8 @@ class Team:
         return min((target_dt - last_game_date).days, 7)
 
     def get_score_from_csv(self, game_date):
-        """BUG FIX: Pull score from local CSV if API Scoreboard is behind."""
+        """BUG FIX: Pull final score from local CSV if API is lagging[cite: 11, 16]."""
+        if self.df is None: return None
         try:
             target_dt = pd.to_datetime(game_date).date()
             game_row = self.df[self.df['GAME_DATE'].dt.date == target_dt]
@@ -103,14 +98,13 @@ class Team:
                 pts = int(row['PTS'])
                 opp_pts = int(pts - row['PLUS_MINUS'])
                 return {"home": pts, "away": opp_pts} if is_home else {"home": opp_pts, "away": pts}
-            return None
-        except: return None
+        except: pass
+        return None
 
     def _fetch_roster(self):
+        """Top 12 MPG to ensure stars like Jayson Tatum are found[cite: 11, 16]."""
         try:
-            team_data = [t for t in nba_teams.get_teams() if t['abbreviation'] == self.abbreviation]
-            if not team_data: return []
-            team_id = team_data[0]['id']
+            team_id = [t for t in nba_teams.get_teams() if t['abbreviation'] == self.abbreviation][0]['id']
             dash = teamplayerdashboard.TeamPlayerDashboard(team_id=team_id)
             player_stats = dash.get_data_frames()[1]
             top_12 = player_stats.sort_values(by='MIN', ascending=False).head(12)
