@@ -35,7 +35,7 @@ class Team:
             new_games_df = game_finder.get_data_frames()[0]
             new_games_df['GAME_DATE'] = pd.to_datetime(new_games_df['GAME_DATE'])
             new_games_df = new_games_df[new_games_df['GAME_DATE'] >= '2021-01-01']
-            new_games_df = new_games_df[new_games_df['SEASON_ID'].str.startswith(('2', '4'))]
+            new_games_df = new_games_df[new_games_df['SEASON_ID'].astype(str).str.startswith(('2', '4'))]
 
             new_games_df.to_csv(self.file_path, index=False)
             self.load_and_process()
@@ -52,8 +52,7 @@ class Team:
         self.df['GAME_DATE'] = pd.to_datetime(self.df['GAME_DATE'], format='mixed')
         self.df = self.df.sort_values('GAME_DATE', ascending=False).reset_index(drop=True)
 
-        # --- ADVANCED LOGIC: Possession & Efficiency ---
-        # Possession Formula: FGA + 0.44 * FTA + TOV - OREB
+        # Advanced Efficiency Logic
         if all(col in self.df.columns for col in ['FGA', 'FTA', 'TOV', 'OREB']):
             self.df['POSS'] = self.df['FGA'] + (0.44 * self.df['FTA']) + self.df['TOV'] - self.df['OREB']
             self.df['OFF_RTG'] = (self.df['PTS'] / self.df['POSS']) * 100
@@ -86,9 +85,8 @@ class Team:
         self.splits['away_win_pct'] = len(away[away['WL'] == 'W']) / len(away) if not away.empty else 0
 
     def get_rest_days(self, target_date):
-        """Calculates days since the last game played relative to the target matchup date."""
         target_dt = pd.to_datetime(target_date)
         past_games = self.df[self.df['GAME_DATE'] < target_dt]
-        if past_games.empty: return 3 # Assume rested if no history
+        if past_games.empty: return 3 
         last_game_date = past_games['GAME_DATE'].max()
         return (target_dt - last_game_date).days
