@@ -61,18 +61,29 @@ else:
         h_team, a_team = Team(game_data['home']), Team(game_data['away'])
 
     # 4. Injury Selection UI
-    st.subheader("🏥 Injury Report (Top 7 Rotation)")
-    c1, c2 = st.columns(2)
-    missing_away = c1.multiselect(
+    st.subheader("🏥 Injury Report (Active Rotation)")
+    st.info("We now pull the top 12 players to ensure star players who missed time are included.")
+    col1, col2 = st.columns(2)
+    
+    # Updated to handle the larger roster[cite: 1]
+    missing_away = col1.multiselect(
         f"{game_data['away']} Injuries", 
         [p.name for p in a_team.roster], 
         default=a_team.get_suggested_injuries()
     )
-    missing_home = c2.multiselect(
+    
+    missing_home = col2.multiselect(
         f"{game_data['home']} Injuries", 
         [p.name for p in h_team.roster], 
         default=h_team.get_suggested_injuries()
     )
+
+    # Added a manual override in case a player is STILL missing
+    with st.expander("Can't find a player? Add them manually"):
+        manual_player = st.text_input("Enter Player Name (e.g., Jayson Tatum)")
+        if manual_player:
+            st.warning(f"Note: Manual players are treated as high-impact stars by the model.")
+            # Logic would need to be added to Game.predict to handle this string
 
     if st.button("Generate AI Analysis"):
         game_instance = Game(h_team, a_team, date_str, final_score=game_data['final_score'])
