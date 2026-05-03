@@ -1,6 +1,6 @@
 import time
 from nba_api.stats.static import teams
-from fetch_team_data import fetch_team_data
+from fetch_team_data import fetch_team_data 
 
 def refresh_all_teams():
     all_nba_teams = teams.get_teams()
@@ -10,7 +10,7 @@ def refresh_all_teams():
     for team in all_nba_teams:
         abr = team['abbreviation']
         fetch_team_data(abr)
-        # 1-second pause to prevent getting blocked by the NBA API
+        # 1-second pause to strictly avoid NBA API rate limiting
         time.sleep(1.0) 
 
     duration = (time.time() - start_time) / 60
