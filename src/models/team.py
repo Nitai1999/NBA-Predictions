@@ -12,10 +12,9 @@ class Team:
         self.file_path = os.path.join('data', 'raw', f"{self.abbreviation}_games.csv")
         self.df = None
         
-        # Stat dictionaries[cite: 11, 16]
+        # Stat dictionaries[cite: 16]
         self.last_10_stats = {'win_pct': 0, 'net_rating': 0, 'avg_pace': 0}
         self.season_metrics = {'win_pct': 0, 'off_rating': 0, 'def_rating': 0, 'pace': 0, 'net_rating': 0}
-        self.splits = {'home_win_pct': 0, 'away_win_pct': 0}
         
         if self.data_exists():
             self.load_and_process()
@@ -27,7 +26,7 @@ class Team:
         return os.path.exists(self.file_path)
 
     def fetch_stats(self):
-        """Full historical data fetch with rate limiting[cite: 11, 16]."""
+        """Full historical data fetch with rate limiting[cite: 16]."""
         try:
             target_team = [t for t in nba_teams.get_teams() if t['abbreviation'] == self.abbreviation]
             if not target_team: return False
@@ -57,7 +56,6 @@ class Team:
         self.df['GAME_DATE'] = pd.to_datetime(self.df['GAME_DATE'], format='mixed')
         self.df = self.df.sort_values('GAME_DATE', ascending=False).reset_index(drop=True)
 
-        # Advanced Efficiency Logic (POSS, OFF_RTG, PACE)[cite: 11, 16]
         if all(col in self.df.columns for col in ['FGA', 'FTA', 'TOV', 'OREB']):
             self.df['POSS'] = self.df['FGA'] + (0.44 * self.df['FTA']) + self.df['TOV'] - self.df['OREB']
             self.df['OFF_RTG'] = (self.df['PTS'] / self.df['POSS']) * 100
@@ -87,11 +85,11 @@ class Team:
         return min((target_dt - last_game_date).days, 7)
 
     def get_score_from_csv(self, game_date):
-        """BUG FIX: Pull final score from local CSV if API is lagging[cite: 11, 16]."""
+        """Aggressive check to bypass API lag by searching local CSV history[cite: 16]."""
         if self.df is None: return None
         try:
-            target_dt = pd.to_datetime(game_date).date()
-            game_row = self.df[self.df['GAME_DATE'].dt.date == target_dt]
+            target_dt_str = pd.to_datetime(game_date).strftime('%Y-%m-%d')
+            game_row = self.df[self.df['GAME_DATE'].dt.strftime('%Y-%m-%d') == target_dt_str]
             if not game_row.empty:
                 row = game_row.iloc[0]
                 is_home = 'vs.' in row['MATCHUP']
@@ -102,7 +100,7 @@ class Team:
         return None
 
     def _fetch_roster(self):
-        """Top 12 MPG to ensure stars like Jayson Tatum are found[cite: 11, 16]."""
+        """Top 12 MPG fetch to ensure stars like Jayson Tatum are included[cite: 16]."""
         try:
             team_id = [t for t in nba_teams.get_teams() if t['abbreviation'] == self.abbreviation][0]['id']
             dash = teamplayerdashboard.TeamPlayerDashboard(team_id=team_id)
