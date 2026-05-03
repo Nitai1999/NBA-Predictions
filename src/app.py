@@ -69,11 +69,11 @@ else:
     options = [f"{g['away']} @ {g['home']} ({g['status']})" for g in games_list]
     selected_option = st.selectbox("Choose a Game", options)
     
-    # Identify the selected game object
+    # Identify the selected game data
     game_data = next(g for g in games_list if f"{g['away']} @ {g['home']} ({g['status']})" == selected_option)
 
     if st.button("Generate AI Analysis"):
-        # Data Integrity Check: Ensure we have the CSVs[cite: 2]
+        # Data Integrity Check
         with st.status("Data Sync in Progress...", expanded=False) as status:
             st.write(f"Checking {game_data['home']} records...")
             fetch_team_data(game_data['home'])
@@ -92,27 +92,25 @@ else:
             final_score=game_data['final_score']
         )
 
+        # Unified Prediction Logic: This calls the method we added to game.py
+        prediction_results = game_instance.predict()
+
         # Output Results
         st.divider()
-        if game_data['final_score']:
+        if prediction_results["is_past"]:
             st.subheader("🏟️ Game Result")
             c1, c2 = st.columns(2)
             c1.metric(game_data['away'], game_data['final_score']['away'])
             c2.metric(game_data['home'], game_data['final_score']['home'])
         else:
-            prob = game_instance.calculate_prediction_score()
-            winner = game_data['home'] if prob > 0.5 else game_data['away']
+            prob = prediction_results["probability"]
             conf = f"{prob if prob > 0.5 else (1 - prob):.1%}"
             
-            st.subheader(f"🔮 Prediction: {winner} wins")
+            st.subheader(f"🔮 Prediction: {prediction_results['winner']} wins")
             st.write(f"Confidence Level: **{conf}**")
 
         st.markdown("### 🤖 AI Narrative Analysis")
-        narrative = game_instance.get_ai_explanation(
-            prob if not game_data['final_score'] else 0, 
-            game_data['home']
-        )
-        st.write(narrative)
+        st.write(prediction_results["narrative"])
 
 st.divider()
-st.caption(f"🐾 Mishka's dog-wisdom: 'The schedule is my favorite bone to chew on!'")
+st.caption(f"🐾 Mishka's dog-wisdom: 'Consistency is better than a squirrel on a fence!'")
