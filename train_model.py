@@ -81,7 +81,7 @@ def train_ml_engine():
         print(f"🔹 {feature:15}: {imp:.4f}")
 
     os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
-    joblib.dump(model, MODEL_PATH)
+    joblib.dump(model, MODEL_PATH, compress=3)
     print(f"\n💾 Model saved to {MODEL_PATH}")
 
 if __name__ == "__main__":
