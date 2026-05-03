@@ -12,13 +12,14 @@ class Team:
         self.file_path = os.path.join('data', 'raw', f"{self.abbreviation}_games.csv")
         self.df = None
         
+        # Enhanced stat dictionaries
         self.last_10_stats = {'win_pct': 0, 'net_rating': 0, 'avg_pace': 0}
         self.season_metrics = {'win_pct': 0, 'off_rating': 0, 'def_rating': 0, 'pace': 0, 'net_rating': 0}
         self.splits = {'home_win_pct': 0, 'away_win_pct': 0}
         
         if self.data_exists():
             self.load_and_process()
-            self.roster = self._fetch_roster() # Now pulls Top 12
+            self.roster = self._fetch_roster()
         else:
             self.roster = []
 
@@ -26,9 +27,11 @@ class Team:
         return os.path.exists(self.file_path)
 
     def fetch_stats(self):
+        """FULL VERSION: Includes API rate limit protection and filtering[cite: 4]."""
         try:
             target_team = [t for t in nba_teams.get_teams() if t['abbreviation'] == self.abbreviation]
             if not target_team: return False
+            
             real_id = target_team[0]['id']
             os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
             time.sleep(0.6) 
@@ -50,9 +53,11 @@ class Team:
         if not self.data_exists(): return
         self.df = pd.read_csv(self.file_path)
         if self.df.empty: return
+
         self.df['GAME_DATE'] = pd.to_datetime(self.df['GAME_DATE'], format='mixed')
         self.df = self.df.sort_values('GAME_DATE', ascending=False).reset_index(drop=True)
 
+        # Advanced Efficiency Logic (POSS, OFF_RTG, PACE)[cite: 4]
         if all(col in self.df.columns for col in ['FGA', 'FTA', 'TOV', 'OREB']):
             self.df['POSS'] = self.df['FGA'] + (0.44 * self.df['FTA']) + self.df['TOV'] - self.df['OREB']
             self.df['OFF_RTG'] = (self.df['PTS'] / self.df['POSS']) * 100
@@ -93,29 +98,22 @@ class Team:
         return min((target_dt - last_game_date).days, 7)
 
     def _fetch_roster(self):
-        """ATTACK PLAN: Pull Top 12 to ensure stars aren't missed[cite: 4]."""
+        """Expanded to Top 12 MPG to ensure star players aren't missed[cite: 4]."""
         try:
             team_data = [t for t in nba_teams.get_teams() if t['abbreviation'] == self.abbreviation]
             if not team_data: return []
             team_id = team_data[0]['id']
             dash = teamplayerdashboard.TeamPlayerDashboard(team_id=team_id)
             player_stats = dash.get_data_frames()[1]
-            # Sorting by MIN (Average Minutes) ensures stars stay at the top[cite: 4]
             top_12 = player_stats.sort_values(by='MIN', ascending=False).head(12)
             return [Player(row['PLAYER_NAME'], row['PLAYER_ID'], row) for _, row in top_12.iterrows()]
-        except Exception:
-            return []
+        except Exception: return []
 
     def get_suggested_injuries(self):
+        """Checks if Top 12 players missed the last game[cite: 4]."""
         try:
             last_game_id = self.df.iloc[0]['GAME_ID']
             box = boxscoretraditionalv2.BoxScoreTraditionalV2(game_id=last_game_id)
-            player_stats = box.get_data_frames()[0]
-            suggested = []
-            for p in self.roster:
-                p_row = player_stats[player_stats['PLAYER_ID'] == p.id]
-                if p_row.empty or p_row.iloc[0]['MIN'] is None:
-                    suggested.append(p.name)
-            return suggested
-        except Exception:
-            return []
+            p_stats = box.get_data_frames()[0]
+            return [p.name for p in self.roster if p_stats[p_stats['PLAYER_ID'] == p.id].empty]
+        except: return []
