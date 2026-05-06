@@ -39,34 +39,33 @@ class Game:
                 base_prob = self.ml_model.predict_proba(features)[0][1]
             except: pass
 
+        # WIF adjustment logic[cite: 9]
         h_full = sum(p.wif for p in self.home_team.roster)
         a_full = sum(p.wif for p in self.away_team.roster)
         h_miss = sum(p.wif for p in self.home_team.roster if p.name in (missing_home or []))
         a_miss = sum(p.wif for p in self.away_team.roster if p.name in (missing_away or []))
-        
         h_ratio = (h_full - h_miss) / h_full if h_full > 0 else 1
         a_ratio = (a_full - a_miss) / a_full if a_full > 0 else 1
-        
         return max(0.01, min(0.99, base_prob * (h_ratio / a_ratio)))
 
     def get_ai_explanation(self, prob, winner_abr, missing_home, missing_away):
         confidence = f"{prob if prob > 0.5 else (1 - prob):.1%}"
         status = "COMPLETED" if self.final_score else "PREDICTION"
-        
         summary = f"--- {status} ---\nWinner: {winner_abr}\nConfidence: {confidence}\nModel: RF ML + WIF Adjustment"
 
         if not self.client: return summary
 
-        prompt = f"Analyze the NBA game: {self.away_team.abbreviation} @ {self.home_team.abbreviation}. Favored: {winner_abr}. Injuries: Home {missing_home}, Away {missing_away}."
+        prompt = f"Analyze: {self.away_team.abbreviation} @ {self.home_team.abbreviation}. Favored: {winner_abr}. Missing: {missing_home} (Home), {missing_away} (Away)."
         try:
             response = self.client.models.generate_content(model="gemini-1.5-pro", contents=prompt)
             return f"{summary}\n\n{response.text.strip()}"
         except: return summary
 
     def predict(self, missing_home=None, missing_away=None):
+        """Predicts or summarizes based on available data[cite: 9]."""
         if self.final_score:
             winner = self.home_team.abbreviation if self.final_score['home'] > self.final_score['away'] else self.away_team.abbreviation
-            return {"winner": winner, "probability": 1.0 if winner == self.home_team.abbreviation else 0.0, "narrative": "Game recorded in database.", "is_past": True}
+            return {"winner": winner, "probability": 1.0 if winner == self.home_team.abbreviation else 0.0, "narrative": "Buzzer beater! Game completed.", "is_past": True}
             
         prob = self.calculate_prediction_score(missing_home, missing_away)
         winner = self.home_team.abbreviation if prob > 0.5 else self.away_team.abbreviation

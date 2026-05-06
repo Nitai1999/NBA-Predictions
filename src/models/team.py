@@ -8,12 +8,10 @@ from .player import Player
 class Team:
     def __init__(self, abbreviation):
         self.abbreviation = abbreviation
-        self.team_id = abbreviation 
         self.file_path = os.path.join('data', 'raw', f"{self.abbreviation}_games.csv")
         self.df = None
         
-        self.last_10_stats = {'win_pct': 0, 'net_rating': 0, 'avg_pace': 0}
-        self.season_metrics = {'win_pct': 0, 'off_rating': 0, 'def_rating': 0, 'pace': 0, 'net_rating': 0}
+        self.season_metrics = {'win_pct': 0, 'net_rating': 0}
         
         if self.data_exists():
             self.load_and_process()
@@ -24,21 +22,6 @@ class Team:
     def data_exists(self):
         return os.path.exists(self.file_path)
 
-    def fetch_stats(self):
-        try:
-            target_team = [t for t in nba_teams.get_teams() if t['abbreviation'] == self.abbreviation]
-            if not target_team: return False
-            real_id = target_team[0]['id']
-            os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
-            time.sleep(0.6) 
-
-            game_finder = leaguegamefinder.LeagueGameFinder(team_id_nullable=real_id)
-            new_games_df = game_finder.get_data_frames()[0]
-            new_games_df.to_csv(self.file_path, index=False)
-            self.load_and_process()
-            return True
-        except: return False
-
     def load_and_process(self):
         if not self.data_exists(): return
         self.df = pd.read_csv(self.file_path)
@@ -46,19 +29,11 @@ class Team:
         self.df['GAME_DATE'] = pd.to_datetime(self.df['GAME_DATE'], format='mixed')
         self.df = self.df.sort_values('GAME_DATE', ascending=False).reset_index(drop=True)
 
-        if all(col in self.df.columns for col in ['FGA', 'FTA', 'TOV', 'OREB']):
-            self.df['POSS'] = self.df['FGA'] + (0.44 * self.df['FTA']) + self.df['TOV'] - self.df['OREB']
-            self.df['OFF_RTG'] = (self.df['PTS'] / self.df['POSS']) * 100
-            self.df['DEF_RTG'] = ((self.df['PTS'] - self.df['PLUS_MINUS']) / self.df['POSS']) * 100
-            self.df['NET_RTG'] = self.df['OFF_RTG'] - self.df['DEF_RTG']
-            self.df['PACE'] = (self.df['POSS'] / (self.df['MIN'] / 5)) * 48
-        
-        reg_df = self.df[self.df['SEASON_ID'].astype(str).str.startswith('2')]
-        if not reg_df.empty:
-            self.latest_reg_season_id = reg_df['SEASON_ID'].max()
-            season_df = reg_df[reg_df['SEASON_ID'] == self.latest_reg_season_id]
-            self.season_metrics['win_pct'] = (season_df['WL'] == 'W').mean()
-            self.season_metrics['net_rating'] = season_df['NET_RTG'].mean()
+        if all(col in self.df.columns for col in ['PTS', 'PLUS_MINUS']):
+            reg_df = self.df[self.df['SEASON_ID'].astype(str).str.startswith('2')]
+            if not reg_df.empty:
+                season_df = reg_df[reg_df['SEASON_ID'] == reg_df['SEASON_ID'].max()]
+                self.season_metrics['win_pct'] = (season_df['WL'] == 'W').mean()
 
     def get_rest_days(self, target_date):
         past = self.df[self.df['GAME_DATE'] < pd.to_datetime(target_date)]
@@ -66,7 +41,7 @@ class Team:
         return min((pd.to_datetime(target_date) - past['GAME_DATE'].max()).days, 7)
 
     def get_score_from_csv(self, game_date):
-        """Hard check for scores in local data[cite: 16]."""
+        """Standardizing date check to find scores in local CSV files."""
         if self.df is None: return None
         try:
             target_dt_str = pd.to_datetime(game_date).strftime('%Y-%m-%d')
